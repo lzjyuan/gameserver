@@ -1,0 +1,176 @@
+// ==UserScript==
+// @name         gameService 抓包器（UI版 / 可选自动保存目录）
+// @namespace    http://tampermonkey.net/
+// @version      2.0
+// @description  拦截 gameService 请求，显示在 UI 面板，支持选择保存目录
+// @match        *://demogamesfree.pnmrphdchu.net/gs2c/html5Game.do*
+// @grant        none
+// ==/UserScript==
+
+(function () {
+    'use strict';
+
+    const FILTER_PATTERN = /\/gs2c\/ge\/v4\/gameService|gameService/;
+
+    /*************************
+     *     UI 面板创建
+     *************************/
+    const panel = document.createElement("div");
+    panel.style = 
+        position: fixed;
+        top: 20px;
+
+        width: 420px;
+        height: 550px;
+        background: #111;
+        color: #0f0;
+        font-size: 12px;
+        font-family: Consolas, monospace;
+        z-index: 999999;
+        padding: 10px;
+        border-radius: 8px;
+        border: 1px solid #444;
+        resize: both;
+        overflow: hidden;
+        box-shadow: 0 0 10px #000;
+    ;
+    panel.innerHTML = 
+        <div style="font-size:14px;color:#6cf;margin-bottom:6px;">
+            <b>[gameService 抓包器]</b>
+        </div>
+
+        <label style="color:#ccc;">
+            <input id="autoSaveCheck" type="checkbox"> 自动保存响应
+        </label>
+        <button id="chooseDir" style="margin-left:10px;">选择保存目录</button>
+        <div id="savePath" style="color:#8f8;margin-top:5px;"></div>
+
+        <div id="logBox"
+            style="margin-top:10px;width:100%;height:450px;background:#000;
+            padding:5px;overflow:auto;border:1px solid #222;">
+        </div>
+    ;
+    document.body.appendChild(panel);
+
+    const chkAuto = panel.querySelector("#autoSaveCheck");
+    const btnDir = panel.querySelector("#chooseDir");
+    const savePath = panel.querySelector("#savePath");
+    const logBox = panel.querySelector("#logBox");
+
+    let saveDirectory = null; // 目录句柄
+
+    /*************************
+     * 目录选择（Chrome）
+     *************************/
+    btnDir.onclick = async () => {
+        try {
+            saveDirectory = await window.showDirectoryPicker();
+            savePath.textContent = "保存目录: " + saveDirectory.name;
+            chkAuto.checked = true;
+        } catch (e) {
+            savePath.textContent = "未选择目录";
+        }
+    };
+
+    /*************************
+     * 保存到目录（原生）
+     *************************/
+    async function saveToDirectory(filename, content) {
+        if (!saveDirectory) return false;
+        try {
+            const fileHandle = await saveDirectory.getFileHandle(filename, { create: true });
+            const writable = await fileHandle.createWritable();
+            await writable.write(content);
+            await writable.close();
+            return true;
+        } catch (e) {
+            console.error("目录保存失败", e);
+            return false;
+        }
+    }
+
+    /*************************
+     * 默认下载
+     *************************/
+    function saveTxt_Default(filename, content) {
+        const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+    }
+
+    /*************************
+     * 写入 UI log
+     *************************/
+    function log(msg) {
+        logBox.innerHTML += msg + "<br>";
+        logBox.scrollTop = logBox.scrollHeight;
+    }
+
+    /*************************
+     * 拦截 fetch
+     *************************/
+    const _fetch = window.fetch;
+    window.fetch = async function (input, init = {}) {
+        const url = typeof input === "string" ? input : input.url;
+        const res = await _fetch.apply(this, arguments);
+
+        if (FILTER_PATTERN.test(url)) {
+            const clone = res.clone();
+            let respText = await clone.text();
+
+            log(<span style="color:#6cf">[FETCH]</span> URL: ${url});
+            log(<span style="color:#cf6">请求:</span> ${init.body});
+            log(<span style="color:#6f6">响应:</span> ${respText});
+            log("-------------------------------------------------------");
+
+            const filename = gameService_fetch_${Date.now()}.txt;
+
+            if (chkAuto.checked) {
+                const ok = await saveToDirectory(filename, respText);
+                if (!ok) saveTxt_Default(filename, respText);
+            }
+        }
+        return res;
+    };
+
+    /*************************
+     * 拦截 XHR
+     *************************/
+    const _open = XMLHttpRequest.prototype.open;
+    const _send = XMLHttpRequest.prototype.send;
+
+    XMLHttpRequest.prototype.open = function (method, url) {
+        this._gm_url = url;
+        return _open.apply(this, arguments);
+    };
+
+    XMLHttpRequest.prototype.send = function (body) {
+
+        this.addEventListener("load", async () => {
+            const url = this._gm_url;
+            if (FILTER_PATTERN.test(url)) {
+                let resp = this.responseText;
+
+                log(<span style="color:#6cf">[XHR]</span> URL: ${url});
+                log(<span style="color:#cf6">请求:</span> ${body});
+                log(<span style="color:#6f6">响应:</span> ${resp});
+                log("-------------------------------------------------------");
+
+                const filename = gameService_xhr_${Date.now()}.txt;
+
+                if (chkAuto.checked) {
+                    const ok = await saveToDirectory(filename, resp);
+                    if (!ok) saveTxt_Default(filename, resp);
+                }
+            }
+        });
+
+        return _send.apply(this, arguments);
+    };
+
+    console.log("%c[gameService 抓包器 UI 版已启动]", "color:cyan;font-size:16px;");
+})();

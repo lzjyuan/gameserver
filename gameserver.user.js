@@ -3,7 +3,7 @@
 // @namespace    http://tampermonkey.net/
 // @version      2.0
 // @description  拦截 gameService 请求，显示在 UI 面板，支持选择保存目录
-// @match        *://demogamesfree.pnmrphdchu.net/gs2c/html5Game.do*
+// @include *://demogamesfree.*.net/gs2c/html5Game.do*
 // @grant        none
 // ==/UserScript==
 
